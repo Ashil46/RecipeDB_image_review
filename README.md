@@ -15,7 +15,6 @@ RecipeDB_image_review/
 │
 ├── review_server.py               # Main Flask web application
 ├── README.md                      # User guide and documentation
-├── requirements.txt               # Python package dependencies
 │
 ├── recipes_to_review.csv          # Default input CSV (or custom path passed via CLI)
 ├── reviewed_recipes_output.csv    # Output CSV (auto-created and updated as you review)
@@ -33,17 +32,13 @@ RecipeDB_image_review/
 * **Internet Connection**: Required to query Wikimedia Commons and DuckDuckGo and to download approved images
 
 ### 3.2 Install Required Packages
-Install Flask and the DuckDuckGo search library:
+Only **two** external Python packages are required (all other dependencies use Python's built-in standard library):
 
 ```bash
-pip install flask ddgs
+pip install flask duckduckgo-search
 ```
 
-*(Or if using `requirements.txt`:)*
 
-```bash
-pip install -r requirements.txt
-```
 
 ### 3.3 Automatic Directory Creation
 When you start `review_server.py`, it automatically creates the `downloaded_recipe_images/` directory (and initializes `reviewed_recipes_output.csv` with all rows from your input CSV) if they do not already exist.
