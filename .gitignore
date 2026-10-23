@@ -1,0 +1,24 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Temporary and office lock files
+.~lock.*
+*.tmp
+
+# Downloaded recipe image assets
+downloaded_recipe_images/
+
+# Local search cache
+search_cache.json
+
+# Virtual environments
+.env
+venv/
+env/
+.venv/
+
+# OS specific files
+.DS_Store
+Thumbs.db
