@@ -160,30 +160,6 @@ def summarize_context(row_map):
     return (cleaned[:140] + "...") if len(cleaned) > 140 else cleaned
 
 
-def detect_image_issue(image_url, na_image, reason):
-    """
-    Determine whether a recipe has a flagged/missing/generic image issue
-    and return (has_issue_bool, issue_label_str).
-    """
-    url_lower = (image_url or "").lower()
-    is_generic = any(
-        token in url_lower
-        for token in ("fdc-sharegraphic", "gk-static", "default", "no-image", "placeholder")
-    )
-
-    if not image_url:
-        return True, "MISSING IMAGE URL"
-    if na_image == "1" and is_generic:
-        return True, "FLAGGED: na_image = 1 (Generic Fallback Image)"
-    if na_image == "1":
-        return True, f"FLAGGED: na_image = 1 ({reason})" if reason else "FLAGGED: na_image = 1"
-    if is_generic:
-        return True, "GENERIC FALLBACK IMAGE DETECTED"
-    if reason:
-        return True, f"ISSUE: {reason}"
-    return False, "Verify Existing Image"
-
-
 # --- CSV Persistence (Unified In-Memory Store + Full Output Mirror) ---
 def is_completed_decision(row):
     final_url = str(row.get("final_image_url") or "").strip()
@@ -203,7 +179,7 @@ def sync_output_csv():
 
 
 def load_datasets():
-    """Load INPUT_CSV and merge any completed decisions from OUTPUT_CSV."""
+    """Load pre-flagged recipes from INPUT_CSV and merge completed decisions from OUTPUT_CSV."""
     RECIPES.clear()
     if not os.path.exists(INPUT_CSV):
         print(f"[ERROR] Input CSV not found: {INPUT_CSV}")
@@ -224,8 +200,9 @@ def load_datasets():
             raw_na = lmap.get("na_image")
             na_image = "" if raw_na is None else str(raw_na).strip()
             reason = str(lmap.get("reason") or "").strip()
+            if not reason:
+                reason = "Missing image_url" if not image_url else (f"na_image = {na_image}" if na_image else "Flagged image")
 
-            has_issue, issue_label = detect_image_issue(image_url, na_image, reason)
             primary_q, fallback_q = build_queries(rname, cuisine, category)
 
             RECIPES[rid] = {
@@ -237,8 +214,6 @@ def load_datasets():
                 "image_id": image_id,
                 "na_image": na_image,
                 "reason": reason,
-                "has_issue": has_issue,
-                "issue_label": issue_label,
                 "recipe_page_url": str(lmap.get("url") or "").strip(),
                 "context_snippet": summarize_context(lmap),
                 "primary_query": primary_q,
@@ -268,8 +243,7 @@ def load_datasets():
     if RECIPES:
         sync_output_csv()
     done_cnt = sum(1 for r in RECIPES.values() if r["reviewed"])
-    issue_cnt = sum(1 for r in RECIPES.values() if r["has_issue"])
-    print(f"[INFO] Loaded {len(RECIPES)} recipes ({issue_cnt} flagged with image issues, {done_cnt} already reviewed).")
+    print(f"[INFO] Loaded {len(RECIPES)} flagged recipes ({done_cnt} already reviewed).")
 
 
 # --- Web Search Providers ---
@@ -522,50 +496,24 @@ HTML_TEMPLATE = """
     .recipe-row {
         background: #fff; border-radius: 8px; padding: 16px 18px; margin-bottom: 20px;
         box-shadow: 0 1px 4px rgba(0,0,0,0.07); border: 2px solid transparent;
-        border-left: 6px solid #cbd5e1;
     }
-    /* High-visibility styling for recipes with flagged/missing/broken images */
-    .recipe-row.issue-row {
-        border-left: 6px solid #dc2626;
-        background: #fffdfd;
-    }
-    .recipe-row.active-row {
-        border-color: #2563eb;
-        border-left-width: 6px;
-    }
-    .recipe-row.issue-row.active-row {
-        border-color: #2563eb;
-        border-left-color: #dc2626;
-    }
+    .recipe-row.active-row { border-color: #2563eb; }
 
     .recipe-banner {
         display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start;
-        gap: 10px; padding: 10px 12px; border-radius: 6px; margin-bottom: 12px;
-        background: #f8fafc; border: 1px solid #e5e7eb;
+        gap: 10px; padding-bottom: 10px; border-bottom: 1px solid #e5e7eb; margin-bottom: 12px;
     }
-    .recipe-row.issue-row .recipe-banner {
-        background: #fef2f2; border-color: #fecaca;
-    }
-    .recipe-banner h2 { margin: 0 0 6px 0; font-size: 19px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-    .issue-pill {
-        display: inline-block; font-size: 12px; font-weight: 800; padding: 4px 10px;
-        border-radius: 5px; background: #dc2626; color: #ffffff; letter-spacing: 0.02em;
-        text-transform: uppercase;
-    }
-    .ok-pill {
-        display: inline-block; font-size: 11px; font-weight: 700; padding: 3px 8px;
-        border-radius: 5px; background: #e2e8f0; color: #334155;
-    }
+    .recipe-banner h2 { margin: 0 0 6px 0; font-size: 19px; }
     .context-line { font-size: 12px; color: #4b5563; margin-top: 6px; font-style: italic; }
     .badges { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
     .badge {
         font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 4px;
-        background: #ffffff; border: 1px solid #d1d5db; color: #374151;
+        background: #f3f4f6; border: 1px solid #d1d5db; color: #374151;
     }
     .badge-cuisine { background: #eff6ff; color: #1e40af; border-color: #bfdbfe; }
     .badge-category { background: #f0fdf4; color: #166534; border-color: #bbf7d0; }
+    .badge-reason { background: #fef2f2; color: #991b1b; border-color: #fecaca; }
     .badge-done { background: #ecfdf5; color: #065f46; border-color: #6ee7b7; }
-    .badge-issue-count { background: #fee2e2; color: #991b1b; border-color: #fca5a5; font-weight: 700; }
 
     .controls-bar {
         display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
@@ -576,30 +524,23 @@ HTML_TEMPLATE = """
         flex: 1; padding: 6px 9px; font-size: 12px; border: 1px solid #d1d5db; border-radius: 5px;
     }
 
-    .workspace { display: grid; grid-template-columns: 230px 1fr; gap: 14px; align-items: start; }
+    .workspace { display: grid; grid-template-columns: 220px 1fr; gap: 14px; align-items: start; }
     @media (max-width: 900px) { .workspace { grid-template-columns: 1fr; } }
 
     .current-panel {
         background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; text-align: center;
     }
-    .current-panel.panel-issue {
-        background: #fef2f2; border: 2px dashed #dc2626;
-    }
     .current-status-banner {
-        font-size: 11px; font-weight: 800; padding: 4px 6px; border-radius: 4px;
-        margin-bottom: 6px; text-transform: uppercase;
-        background: #e2e8f0; color: #334155;
-    }
-    .current-panel.panel-issue .current-status-banner {
-        background: #dc2626; color: #ffffff;
+        font-size: 11px; font-weight: 700; padding: 4px 6px; border-radius: 4px;
+        margin-bottom: 6px; text-transform: uppercase; background: #fee2e2; color: #991b1b;
     }
     .current-box {
-        height: 150px; display: flex; align-items: center; justify-content: center;
-        background: #fff; border: 1px solid #cbd5e1; border-radius: 4px; margin: 6px 0; overflow: hidden;
+        height: 140px; display: flex; align-items: center; justify-content: center;
+        background: #fff; border: 1px dashed #cbd5e1; border-radius: 4px; margin: 6px 0; overflow: hidden;
     }
-    .current-box img { max-width: 100%; max-height: 144px; object-fit: contain; }
+    .current-box img { max-width: 100%; max-height: 134px; object-fit: contain; }
     .missing-img-alert {
-        padding: 12px; color: #dc2626; font-weight: 800; font-size: 13px; text-align: center;
+        padding: 12px; color: #991b1b; font-weight: 700; font-size: 12px; text-align: center;
     }
 
     .candidate-grid { display: flex; flex-wrap: wrap; gap: 12px; }
@@ -678,7 +619,6 @@ HTML_TEMPLATE = """
         <p>Input: <strong>{{ input_csv }}</strong> | Output: <strong>{{ output_csv }}</strong> | View: <strong>{{ mode_label }}</strong></p>
     </div>
     <div class="progress-panel">
-        <span class="badge badge-issue-count">Flagged Issues in Batch: {{ batch_issue_count }} / {{ items|length }}</span>
         <span style="font-size:13px; font-weight:600;">Reviewed {{ reviewed_count }} of {{ total_count }} ({{ progress_pct }}%)</span>
         <div class="progress-bar"><div class="progress-fill" style="width: {{ progress_pct }}%;"></div></div>
         {% if page > 1 %}
@@ -720,21 +660,17 @@ HTML_TEMPLATE = """
     <input type="hidden" name="filter_mode" value="{{ filter_mode }}">
 
     {% for item in items %}
-    <div class="recipe-row {% if item.has_issue %}issue-row{% endif %}" id="row_{{ item.recipe_id }}" data-recipe-id="{{ item.recipe_id }}" onclick="setActiveRow('{{ item.recipe_id }}')">
+    <div class="recipe-row" id="row_{{ item.recipe_id }}" data-recipe-id="{{ item.recipe_id }}" onclick="setActiveRow('{{ item.recipe_id }}')">
         <input type="hidden" name="recipe_ids" value="{{ item.recipe_id }}">
 
-        <div class="recipe-banner" id="banner_{{ item.recipe_id }}">
+        <div class="recipe-banner">
             <div>
-                <h2>
-                    <span>{{ loop.index + ((page - 1) * batch_size) }}. {{ item.recipe_name }}</span>
-                    <span id="issue_pill_{{ item.recipe_id }}" class="{% if item.has_issue %}issue-pill{% else %}ok-pill{% endif %}">
-                        {{ item.issue_label }}
-                    </span>
-                </h2>
+                <h2>{{ loop.index + ((page - 1) * batch_size) }}. {{ item.recipe_name }}</h2>
                 <div class="badges">
                     <span class="badge">ID: {{ item.recipe_id }}</span>
                     <span class="badge badge-cuisine">Cuisine: {{ item.cuisine or 'N/A' }}</span>
                     <span class="badge badge-category">Category: {{ item.category or 'N/A' }}</span>
+                    <span class="badge badge-reason">{{ item.reason }}</span>
                     <span class="badge" id="qbadge_{{ item.recipe_id }}">Query: {{ item.primary_query }}</span>
                     {% if item.reviewed %}
                     <span class="badge badge-done">Reviewed: {{ item.source }}</span>
@@ -763,36 +699,22 @@ HTML_TEMPLATE = """
         </div>
 
         <div class="workspace">
-            <div class="current-panel {% if item.has_issue %}panel-issue{% endif %}" id="cpanel_{{ item.recipe_id }}">
-                <div class="current-status-banner" id="cstatus_{{ item.recipe_id }}">
-                    {% if not item.image_url %}
-                        MISSING DB IMAGE
-                    {% elif item.has_issue %}
-                        FLAGGED DB IMAGE (na_image={{ item.na_image or '1' }})
-                    {% else %}
-                        CURRENT DB IMAGE
-                    {% endif %}
-                </div>
+            <div class="current-panel">
+                <div class="current-status-banner">Flagged DB Image</div>
                 <div class="current-box">
                     {% if item.image_url %}
-                    <img src="{{ item.image_url }}" alt="Current DB Image"
-                         onerror="markBrokenDbImage('{{ item.recipe_id }}', this);">
-                    <div class="missing-img-alert" style="display:none;">BROKEN EXTERNAL IMAGE LINK</div>
+                    <img src="{{ item.image_url }}" alt="Flagged DB Image"
+                         onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+                    <div class="missing-img-alert" style="display:none;">Broken External Link</div>
                     {% else %}
-                    <div class="missing-img-alert">NO IMAGE URL IN DATABASE</div>
+                    <div class="missing-img-alert">No Image in DB</div>
                     {% endif %}
                 </div>
                 <div style="font-size:11px; color:#475569; margin-bottom:6px; font-weight:600;">
-                    image_id: {{ item.image_id or 'None' }} | na_image: {{ item.na_image or 'N/A' }}
+                    image_id: {{ item.image_id or 'None' }} | na_image: {{ item.na_image or '1' }}
                 </div>
-                {% if item.image_url %}
-                <button type="button" class="btn" style="width:100%; font-size:11px;"
-                        onclick="addCustomCard('{{ item.recipe_id }}', 'keep_current', {{ item.image_url|tojson }}, 'Existing DB Image', {{ (item.recipe_page_url or item.image_url)|tojson }})">
-                    Keep Current Image
-                </button>
-                {% endif %}
 
-                <div class="current-options" style="margin-top: 10px; border-top: 1px solid #e2e8f0; padding-top: 8px;">
+                <div class="current-options" style="margin-top: 8px; border-top: 1px solid #e2e8f0; padding-top: 8px;">
                     <div style="font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase; margin-bottom: 4px; letter-spacing: 0.05em;">
                         Quick Actions
                     </div>
@@ -806,7 +728,7 @@ HTML_TEMPLATE = """
                                value='{"action": "skip"}' {% if not item.reviewed %}checked{% endif %}>
                     </div>
 
-                    <!-- No Suitable Image (NA) Card (Matches Legacy CocktailDB Tool) -->
+                    <!-- No Suitable Image (NA) Card -->
                     <div class="card {% if item.reviewed and item.final_image_url == 'NA' %}selected{% endif %}"
                          id="na_{{ item.recipe_id }}" onclick="selectCard(this)">
                         <span class="hotkey">N</span>
@@ -830,7 +752,7 @@ HTML_TEMPLATE = """
                     <div class="thumb-box"><img src="{{ item.final_image_url }}" alt="Saved Selection"></div>
                     <div class="card-title">Saved ({{ item.source }})</div>
                     <input type="radio" name="decision_{{ item.recipe_id }}"
-                           value='{{ {"action": "keep_current" if item.source == "Existing DB Image" else "candidate", "url": item.final_image_url, "thumb_url": item.final_image_url, "source": item.source, "page_url": item.source_page_url}|tojson }}' checked>
+                           value='{{ {"action": "candidate", "url": item.final_image_url, "thumb_url": item.final_image_url, "source": item.source, "page_url": item.source_page_url}|tojson }}' checked>
                 </div>
                 {% endif %}
 
@@ -870,22 +792,6 @@ HTML_TEMPLATE = """
                 btn.textContent = 'Downloading & Saving...';
             }
         });
-    }
-
-    function markBrokenDbImage(rid, imgEl) {
-        imgEl.style.display = 'none';
-        if (imgEl.nextElementSibling) imgEl.nextElementSibling.style.display = 'block';
-        const row = document.getElementById('row_' + rid);
-        if (row) row.classList.add('issue-row');
-        const panel = document.getElementById('cpanel_' + rid);
-        if (panel) panel.classList.add('panel-issue');
-        const status = document.getElementById('cstatus_' + rid);
-        if (status) status.textContent = 'BROKEN DB IMAGE LINK';
-        const pill = document.getElementById('issue_pill_' + rid);
-        if (pill) {
-            pill.className = 'issue-pill';
-            pill.textContent = 'BROKEN EXTERNAL IMAGE LINK';
-        }
     }
 
     function handleCandidateImgError(imgEl, fallbackUrl) {
@@ -1141,7 +1047,6 @@ def index():
     page = min(page, total_pages)
     start = (page - 1) * BATCH_SIZE
     batch_items = pool[start : start + BATCH_SIZE]
-    batch_issue_count = sum(1 for item in batch_items if item["has_issue"])
 
     return render_template_string(
         HTML_TEMPLATE,
@@ -1156,7 +1061,6 @@ def index():
         batch_size=BATCH_SIZE,
         filter_mode=filter_mode,
         mode_label=mode_label,
-        batch_issue_count=batch_issue_count,
         errors=errors,
     )
 
@@ -1207,17 +1111,6 @@ def submit():
                 "new_image_id": "NA",
                 "final_image_url": "NA",
                 "local_file_path": "NA",
-                "reviewed": True,
-            })
-            saved_any = True
-
-        elif action == "keep_current" or source == "Existing DB Image":
-            recipe.update({
-                "source": "Existing DB Image",
-                "source_page_url": page_url,
-                "new_image_id": recipe["image_id"] or f"rdb3_img_{rid}",
-                "final_image_url": url,
-                "local_file_path": "EXISTING_DB_IMAGE",
                 "reviewed": True,
             })
             saved_any = True
