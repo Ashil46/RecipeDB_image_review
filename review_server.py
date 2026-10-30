@@ -565,6 +565,10 @@ HTML_TEMPLATE = """
     .current-panel .skip-box {
         font-size: 11px;
     }
+    .current-panel .keep-box {
+        font-size: 11px;
+        padding: 4px;
+    }
     .card:hover { border-color: #9ca3af; }
     .card.selected { border-color: #2563eb; background: #eff6ff; box-shadow: 0 0 0 2px rgba(37,99,235,0.18); }
     .card input[type="radio"] { display: none; }
@@ -585,6 +589,11 @@ HTML_TEMPLATE = """
     .skip-box {
         width: 100%; height: 100%; background: #f3f4f6; color: #4b5563;
         display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 12px;
+    }
+    .keep-box {
+        width: 100%; height: 100%; background: #f0fdf4; color: #166534;
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        padding: 6px 4px; font-weight: 700; font-size: 12px; border: 1px dashed #4ade80;
     }
     .card-title {
         font-size: 11px; color: #374151; white-space: nowrap; overflow: hidden;
@@ -743,6 +752,24 @@ HTML_TEMPLATE = """
                                value='{"action": "na", "url": "NA", "source": "NA", "page_url": "NA"}'
                                {% if item.reviewed and item.final_image_url == 'NA' %}checked{% endif %}>
                     </div>
+
+                    {% if item.image_url %}
+                    <!-- Keep Current DB Image Card -->
+                    <div class="card {% if item.reviewed and item.source == 'DB Original' %}selected{% endif %}"
+                         id="keep_{{ item.recipe_id }}" onclick="selectCard(this)">
+                        <span class="hotkey">C</span>
+                        <div class="thumb-box">
+                            <div class="keep-box">
+                                <div>Keep Current</div>
+                                <small style="font-weight:400; margin-top:2px;">Use DB image</small>
+                            </div>
+                        </div>
+                        <div class="card-title">Keep Current Image</div>
+                        <input type="radio" name="decision_{{ item.recipe_id }}"
+                               value='{"action": "keep_current", "url": {{ item.image_url|tojson }}, "thumb_url": {{ item.image_url|tojson }}, "source": "DB Original", "page_url": {{ (item.recipe_page_url or item.image_url)|tojson }}}'
+                               {% if item.reviewed and item.source == 'DB Original' %}checked{% endif %}>
+                    </div>
+                    {% endif %}
                 </div>
             </div>
 
@@ -764,7 +791,7 @@ HTML_TEMPLATE = """
 
     <div id="submitBar">
         <div style="font-size:12px; color:#4b5563;">
-            <strong>Hotkeys:</strong> <strong>J / K</strong> Next/Prev Row | <strong>1-9, 0</strong> Select Candidate 1-10 | <strong>N</strong> Mark NA | <strong>S</strong> Skip
+            <strong>Hotkeys:</strong> <strong>J / K</strong> Next/Prev Row | <strong>1-9, 0</strong> Select Candidate 1-10 | <strong>N</strong> Mark NA | <strong>S</strong> Skip | <strong>C</strong> Keep Current Image
         </div>
         <button type="submit" id="submitBtn" class="btn btn-success">Save Selections & Load Next Batch</button>
     </div>
@@ -978,6 +1005,9 @@ HTML_TEMPLATE = """
         } else if (e.key.toLowerCase() === 's') {
             e.preventDefault();
             triggerCard('skip_' + activeRecipeId);
+        } else if (e.key.toLowerCase() === 'c') {
+            e.preventDefault();
+            triggerCard('keep_' + activeRecipeId);
         } else if (e.key >= '0' && e.key <= '9') {
             e.preventDefault();
             const grid = document.getElementById('grid_' + activeRecipeId);
@@ -1111,6 +1141,23 @@ def submit():
                 "new_image_id": "NA",
                 "final_image_url": "NA",
                 "local_file_path": "NA",
+                "reviewed": True,
+            })
+            saved_any = True
+
+        elif action == "keep_current":
+            ok, local_path_or_err, used_url = download_image(
+                url, rid, recipe["recipe_name"], page_url=page_url, thumb_url=thumb_url
+            )
+            if not ok:
+                batch_errors.append(f"Recipe {rid} ({recipe['recipe_name']}): {local_path_or_err}")
+                continue
+            recipe.update({
+                "source": "DB Original",
+                "source_page_url": page_url,
+                "new_image_id": f"rdb3_img_{rid}",
+                "final_image_url": used_url,
+                "local_file_path": local_path_or_err,
                 "reviewed": True,
             })
             saved_any = True

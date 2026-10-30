@@ -38,7 +38,7 @@ Only **two** external Python packages are required (all other dependencies use P
 pip install flask duckduckgo-search
 ```
 
-
+*(On Windows, if `pip` is not directly in PATH, run `python -m pip install flask duckduckgo-search`)*
 
 ### 3.3 Automatic Directory Creation
 When you start `review_server.py`, it automatically creates the `downloaded_recipe_images/` directory (and initializes `reviewed_recipes_output.csv` with all rows from your input CSV) if they do not already exist.
@@ -48,17 +48,21 @@ When you start `review_server.py`, it automatically creates the `downloaded_reci
 ## 4. How to Run the Tool
 
 ### 4.1 Start the Server
-Open a terminal in the project directory and run the script with your assigned input CSV file:
+Open a terminal (Command Prompt, PowerShell, or macOS/Linux Terminal) in the project directory and run the script with your assigned input CSV file:
 
+**Windows (Command Prompt / PowerShell):**
+```bash
+python review_server.py path/to/your_input_batch.csv
+```
+
+**macOS / Linux:**
 ```bash
 python3 review_server.py path/to/your_input_batch.csv
 ```
 
 If no input file is specified, the tool looks for `recipes_to_review.csv` first, and falls back to `sample_records.csv` if present.
 
-
-
-### 4.3 Open the Web Interface
+### 4.2 Open the Web Interface
 Once the server starts, you will see:
 
 ```text
@@ -108,6 +112,7 @@ On the left side of each recipe workspace is the reference and action panel:
 * **Quick Actions**:
   * **Skip / Decide Later (Hotkey `S`)**: Selected by default on unreviewed rows. Leaving a recipe on Skip keeps it unreviewed and rotates it to the back of the session queue so new recipes appear first on your next batch.
   * **No Image (NA) (Hotkey `N`)**: Select this card if no accurate photo of the recipe exists in the search results or online. This marks the recipe as reviewed with `NA` across the output image columns.
+  * **Keep Current Image (Hotkey `C`)**:  Select this card if the flagged DB image is actually correct and should be kept. The server re-downloads the existing image URL into the local images folder and records `source` as `DB Original` in the output CSV.
 
 ### 5.4 Candidate Image Grid (Right Panel)
 On the right side of each recipe workspace is the candidate grid displaying up to 10 images from Wikimedia Commons and DuckDuckGo:
@@ -137,6 +142,7 @@ You can review an entire batch using the keyboard:
 * **`0`**: Select Candidate Card 10 in the active row.
 * **`N`**: Select No Image (NA) in the active row.
 * **`S`**: Select Skip / Decide Later in the active row.
+* **`C`**: Select Keep Current Image in the active row .
 
 ---
 
@@ -147,6 +153,7 @@ You can review an entire batch using the keyboard:
 2. **Choose an Action for the Recipe**:
    * **Good match in the grid**: Click the best candidate card (or press `1`–`9` / `0`), favoring high-resolution images without the `(Low Res)` warning.
    * **Poor search results**: Enter simpler keywords in the search bar and click **Search**, or paste a direct image URL and click **Use URL**.
+   * **Existing DB image is correct**: Click **Keep Current Image** (or press `C`) to re-use and download the image already in the database.
    * **No valid image exists online**: Click the **No Image (NA)** card under Quick Actions (or press `N`).
    * **Defer decision**: Leave **Skip / Decide Later** (or press `S`) selected.
 3. **Move Through all 10 Recipes in the Batch**:
@@ -192,7 +199,7 @@ recipe_id,recipe_name,cuisine,category,source,source_page_url,new_image_id,final
 | `recipe_name` | Name of the recipe |
 | `cuisine` | Regional cuisine |
 | `category` | Dish category |
-| `source` | `Wikimedia Commons`, `DuckDuckGo`, `Manual URL`, or `NA` (blank if unreviewed) |
+| `source` | `Wikimedia Commons`, `DuckDuckGo`, `Manual URL`, `DB Original`, or `NA` (blank if unreviewed) |
 | `source_page_url` | Origin web page URL for attribution, or `NA` |
 | `new_image_id` | `rdb3_img_<recipe_id>` for downloaded images, or `NA` |
 | `final_image_url` | Direct URL of the downloaded image, or `NA` (blank if unreviewed) |
