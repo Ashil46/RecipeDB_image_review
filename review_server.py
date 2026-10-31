@@ -162,9 +162,13 @@ def summarize_context(row_map):
 
 # --- CSV Persistence (Unified In-Memory Store + Full Output Mirror) ---
 def is_completed_decision(row):
+    """A row is complete if it has a final decision (image URL or explicit NA) without a download error."""
     final_url = str(row.get("final_image_url") or "").strip()
     local_path = str(row.get("local_file_path") or "").strip()
-    return bool(final_url and not local_path.startswith("ERROR_"))
+    # NA decisions have final_image_url="NA" and local_file_path="NA" — both truthy, neither an error
+    if final_url == "NA" and local_path == "NA":
+        return True
+    return bool(final_url and final_url != "NA" and not local_path.startswith("ERROR_"))
 
 
 def sync_output_csv():
@@ -232,7 +236,14 @@ def load_datasets():
             with open(OUTPUT_CSV, "r", encoding="utf-8-sig") as f:
                 for row in csv.DictReader(f):
                     rid = str(row.get("recipe_id") or "").strip()
-                    if rid in RECIPES and is_completed_decision(row):
+                    if rid not in RECIPES:
+                        continue
+                    # skip_count is session-only — do NOT mark as reviewed based on it
+                    try:
+                        RECIPES[rid]["skip_count"] = int(row.get("skip_count") or 0)
+                    except (ValueError, TypeError):
+                        pass
+                    if is_completed_decision(row):
                         for col in OUTPUT_COLUMNS:
                             if col in row and row[col] is not None:
                                 RECIPES[rid][col] = str(row[col]).strip()
@@ -408,8 +419,10 @@ def build_download_headers(url, page_url=""):
 
 def fetch_single_image_bytes(target_url, page_url=""):
     """Attempt to download and validate image bytes from a single URL."""
-    headers = build_download_headers(target_url, page_url)
-    req = urllib.request.Request(target_url, headers=headers)
+    # Percent-encode any literal spaces or control characters the DB may have stored in URLs
+    safe_url = urllib.parse.quote(target_url, safe=":/?=&#+%@!$'()*,;")
+    headers = build_download_headers(safe_url, page_url)
+    req = urllib.request.Request(safe_url, headers=headers)
     with urllib.request.urlopen(req, timeout=12, context=SSL_CTX) as resp:
         ctype = (resp.headers.get("Content-Type") or "").lower()
         data = resp.read()
@@ -640,6 +653,7 @@ HTML_TEMPLATE = """
         {% if filter_mode == 'unreviewed' %}
         <a class="btn" href="{{ url_for('index', page=1, filter='all') }}">Show All Recipes</a>
         {% else %}
+        <a class="btn" href="{{ url_for('resume', filter=filter_mode) }}" title="Jump to first unreviewed batch">&#9654; Resume Session</a>
         <a class="btn" href="{{ url_for('index', page=1, filter='unreviewed') }}">Show Unreviewed Only</a>
         {% endif %}
     </div>
@@ -791,7 +805,7 @@ HTML_TEMPLATE = """
 
     <div id="submitBar">
         <div style="font-size:12px; color:#4b5563;">
-            <strong>Hotkeys:</strong> <strong>J / K</strong> Next/Prev Row | <strong>1-9, 0</strong> Select Candidate 1-10 | <strong>N</strong> Mark NA | <strong>S</strong> Skip | <strong>C</strong> Keep Current Image
+            <strong>Hotkeys:</strong> <strong>→ / ←</strong> Next/Prev Row (or J / K) | <strong>1-9, 0</strong> Select Candidate 1-10 | <strong>N</strong> Mark NA | <strong>S</strong> Skip | <strong>C</strong> Keep Current Image
         </div>
         <button type="submit" id="submitBtn" class="btn btn-success">Save Selections & Load Next Batch</button>
     </div>
@@ -991,11 +1005,11 @@ HTML_TEMPLATE = """
         if (!activeRecipeId) setActiveRow(rows[0].dataset.recipeId);
 
         const idx = rows.findIndex(r => r.dataset.recipeId === activeRecipeId);
-        if (e.key === 'j' || e.key === 'ArrowDown') {
+        if (e.key === 'j' || e.key === 'ArrowRight') {
             e.preventDefault();
             const next = rows[Math.min(rows.length - 1, idx + 1)];
             if (next) setActiveRow(next.dataset.recipeId, true);
-        } else if (e.key === 'k' || e.key === 'ArrowUp') {
+        } else if (e.key === 'k' || e.key === 'ArrowLeft') {
             e.preventDefault();
             const prev = rows[Math.max(0, idx - 1)];
             if (prev) setActiveRow(prev.dataset.recipeId, true);
@@ -1151,6 +1165,8 @@ def submit():
             )
             if not ok:
                 batch_errors.append(f"Recipe {rid} ({recipe['recipe_name']}): {local_path_or_err}")
+                # Bump skip_count so this recipe moves toward the back of the unreviewed queue
+                recipe["skip_count"] = recipe.get("skip_count", 0) + 1
                 continue
             recipe.update({
                 "source": "DB Original",
@@ -1177,6 +1193,8 @@ def submit():
             )
             if not ok:
                 batch_errors.append(f"Recipe {rid} ({recipe['recipe_name']}): {local_path_or_err}")
+                # Bump skip_count so this recipe moves toward the back of the unreviewed queue
+                recipe["skip_count"] = recipe.get("skip_count", 0) + 1
                 continue
             recipe.update({
                 "source": source or "DuckDuckGo",
@@ -1197,6 +1215,31 @@ def submit():
     LAST_ERRORS = batch_errors
     next_page = current_page + 1 if filter_mode == "all" else current_page
     return redirect(url_for("index", page=next_page, filter=filter_mode))
+
+
+@app.route("/resume")
+def resume():
+    """Redirect to the batch page where the user left off (first page with unreviewed recipes)."""
+    filter_mode = request.args.get("filter", "unreviewed").strip().lower()
+    unreviewed_pool = sorted(
+        (r for r in RECIPES.values() if not r["reviewed"]),
+        key=lambda r: r["skip_count"],
+    )
+    # Page is always 1 in unreviewed mode since reviewed items fall off the front
+    # In 'all' mode, find the first page that contains an unreviewed recipe
+    if filter_mode == "all":
+        all_ids = list(RECIPES.keys())
+        first_unreviewed = next(
+            (r["recipe_id"] for r in RECIPES.values() if not r["reviewed"]), None
+        )
+        if first_unreviewed and first_unreviewed in all_ids:
+            idx = all_ids.index(first_unreviewed)
+            page = idx // BATCH_SIZE + 1
+        else:
+            page = 1
+    else:
+        page = 1
+    return redirect(url_for("index", page=page, filter=filter_mode))
 
 
 def main():
